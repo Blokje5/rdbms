@@ -1,86 +1,104 @@
 package storage
 
-// import (
-// 	"io"
+import (
+	"errors"
+	"io"
 
-// 	"github.com/blokje5/rdbms/pkg/constants"
-// 	"github.com/blokje5/rdbms/pkg/util"
-// )
+	"github.com/blokje5/rdbms/pkg/constants"
+)
 
 // PageID is a Integer representing the PageId
-type PageID int
+type PageID uint32
 
-// // PageType represents the type of Page
-// type PageType uint8
+type Page struct {
+	pageID     PageID
+	pageHeader *header
+	data       []byte
+}
 
-// const (
-// 	DirectoryHeaderPageType PageType = iota
-// 	DefaultPageType
-// )
+const (
+	// WriteablePageSize represents the size after the page is filled with the header
+	WriteablePageSize = constants.PageSize - headerSize
+)
 
-// // PageHeader represents the header of the page, containing some metadata
-// // Pages should be self containing in this RDBMS
-// type PageHeader interface {
-// 	WriteBytes(w io.Writer)
-// }
+// InitPage initialises an empty page with the given ID
+func InitPage(pageID PageID, pageType PageType) *Page {
+	return &Page{
+		pageID: pageID,
+		pageHeader: &header{
+			pageType: pageType,
+			pageSize: headerSize,
+			nextPage: 0,
+		},
+		data: make([]byte, WriteablePageSize),
+	}
+}
 
-// // DefaultPageHeader represents the header of the default page
-// type DefaultPageHeader struct {
-// 	pageSize uint16
-// }
+// LinkToNextPage links the page to another page
+func (p *Page) LinkToNextPage(pageID PageID) {
+	p.pageHeader.nextPage = pageID
+}
 
-// // CreateDefaultPageHeader creates a DefaultPageHeader for regular pages
-// func CreateDefaultPageHeader(page Page) *DefaultPageHeader {
-// 	return &DefaultPageHeader{
-// 		pageSize: page.GetSize(),
-// 	}
-// }
+// GetNextPage returns the page this page links to, or 0 otherwise
+func (p *Page) GetNextPage() PageID {
+	return p.pageHeader.nextPage
+}
 
-// // WriteBytes writes the page header to the io.Writer
-// func (ph *DefaultPageHeader) WriteBytes(w io.Writer) error {
-// 	if err := binary.Write(w, binary.LittleEndian, DefaultPageType); err != nil {
-// 		return err
-// 	}
+// WriteDataRaw writes the data from the given byte slice to the page data. Note that this 
+// method uses copying so it will not be the most efficient 
+func (p *Page) WriteDataRaw(data []byte) error {
+	l := len(data)
+	if l > WriteablePageSize {
+		return errors.New("Writing more data then maximum writeable page size")
+	}
 
-// 	if err := binary.Write(w, binary.LittleEndian, ph.pageSize); err != nil {
-// 		return err
-// 	}
+	copy(p.data, data)
+	p.pageHeader.pageSize += uint16(l)
 
-// 	return nil
-// }
+	return nil
+}
 
-// // DirectoryHeaderPageHeader implements PageHeader and creates the header for the DirectoryHeaderPage
-// type DirectoryHeaderPageHeader struct {
-// 	pageSize uint16
-// 	// Theoretically nextPage could be any of the constants.MaxNumPages pages.
-// 	// However, the DirectoryHeaderPages are initialised when creating the DB and do not grow dynamically
-// 	nextPage uint8
-// }
+// ReadPage reads a page from an io.Reader
+func ReadPage(r io.Reader) (*Page, error) {
+	headerBuffer := make([]byte, headerSize)
+	n, err := r.Read(headerBuffer)
+	if err != nil {
+		return nil, errors.New("Failure reading header from reader")
+	}
 
-// // CreateDirectoryHeaderPageHeader creates the Header for the DirectoryHeaderPage. It assumes the pageID for the next directory page is sub 256
-// func CreateDirectoryHeaderPageHeader(page Page) *DirectoryHeaderPageHeader {
-// 	return &DirectoryHeaderPageHeader{
-// 		pageSize: page.GetSize(),
-// 		nextPage: uint8(page.GetPageID() + 1),
-// 	}
-// }
+	if n < headerSize {
+		return nil, errors.New("Reader did not contain full header")
+	}
 
-// // WriteBytes writes the page header to the io.Writer
-// func (ph *DirectoryHeaderPageHeader) WriteBytes(w io.Writer) error {
-// 	if err := binary.Write(w, binary.LittleEndian, DirectoryHeaderPageType); err != nil {
-// 		return err
-// 	}
+	header := parseHeader(headerBuffer)
 
-// 	if err := binary.Write(w, binary.LittleEndian, ph.pageSize); err != nil {
-// 		return err
-// 	}
+	data := make([]byte, WriteablePageSize)
+	_, err = r.Read(headerBuffer)
+	if err != nil {
+		return nil, errors.New("Failure reading data from reader")
+	}
 
-// 	if err := binary.Write(w, binary.LittleEndian, ph.nextPage); err != nil {
-// 		return err
-// 	}
+	return &Page{
+		pageID: 0, //TODO should include pageID in header or ensure it is always passed properly
+		pageHeader: &header,
+		data: data,
+	}, nil
+}
 
-// 	return nil
-// }
+// WritePage Writes a page to the io.writer
+func (p *Page) WritePage(w io.Writer) error {
+	err := p.pageHeader.writeBytes(w)
+	if err != nil {
+		return errors.New("Failed to write header to writer")
+	}
+
+	_, err = w.Write(p.data)
+	if err != nil {
+		return errors.New("Failed to write data to writer")
+	}
+
+	return nil
+}
 
 // type Page interface {
 // 	GetSize() uint16
@@ -90,9 +108,9 @@ type PageID int
 // const (
 // 	// DirectoryHeaderPageHeaderSize returns the size in bytes of the DirectoryHeaderPageHeader
 // 	DirectoryHeaderPageHeaderSize = constants.Uint8ByteSize + constants.Uint16ByteSize + constants.Uint8ByteSize
-// 	// DirectoryHeaderPageSlots returns the number of available slots per DirectoryHeaderPage 
+// 	// DirectoryHeaderPageSlots returns the number of available slots per DirectoryHeaderPage
 // 	DirectoryHeaderPageSlots = (constants.PageSize - DirectoryHeaderPageHeaderSize)/constants.Uint16ByteSize
-// ) 
+// )
 
 // // DirectoryHeaderPage implements the header pages of the Heap File
 // // It contains pointers to the next DirectoryHeaderPage. It also contains a directory of pages containing the page size

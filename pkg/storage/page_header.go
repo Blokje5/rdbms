@@ -16,13 +16,13 @@ const (
 )
 
 const (
-	headerSize = constants.Uint8ByteSize + constants.Uint16ByteSize + constants.Uint8ByteSize
+	headerSize = constants.Uint8ByteSize + constants.Uint16ByteSize + constants.Uint32ByteSize
 )
 
 type header struct {
 	pageType PageType
 	pageSize uint16
-	nextPage uint8
+	nextPage PageID
 }
 
 func parseHeader(b []byte) header {
